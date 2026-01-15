@@ -266,6 +266,7 @@ interface TelegramUpdate {
   message?: {
     message_id: number
     message_thread_id?: number
+    date?: number
     text?: string
     caption?: string
     photo?: Array<{ file_id: string; file_unique_id: string; width: number; height: number }>
@@ -277,10 +278,18 @@ interface TelegramUpdate {
 
 async function startUpdatesPoller(state: BotState) {
   const pollSource = state.updatesUrl ? "Cloudflare DO" : "Telegram API"
+  
+  // Only process messages after startup time to avoid replaying history
+  const startupTimestamp = process.env.STARTUP_TIMESTAMP 
+    ? parseInt(process.env.STARTUP_TIMESTAMP, 10) 
+    : Math.floor(Date.now() / 1000)
+  
   log("info", "Updates poller started", { 
     source: pollSource,
     chatId: state.chatId,
     threadId: state.threadId ?? "(none)",
+    startupTimestamp,
+    startupTime: new Date(startupTimestamp * 1000).toISOString(),
   })
 
   let pollCount = 0
@@ -291,11 +300,26 @@ async function startUpdatesPoller(state: BotState) {
       pollCount++
       const pollStart = Date.now()
       
-      const updates = state.updatesUrl
+      let updates = state.updatesUrl
         ? await pollFromDO(state)
         : await pollFromTelegram(state)
       
       const pollDuration = Date.now() - pollStart
+      
+      // Filter out messages from before startup (they're included in initial context)
+      const beforeFilter = updates.length
+      updates = updates.filter(u => {
+        const messageDate = u.message?.date ?? 0
+        return messageDate >= startupTimestamp
+      })
+      
+      if (beforeFilter > updates.length) {
+        log("debug", "Filtered old messages", { 
+          before: beforeFilter, 
+          after: updates.length,
+          startupTimestamp,
+        })
+      }
 
       if (updates.length > 0) {
         totalUpdatesProcessed += updates.length
