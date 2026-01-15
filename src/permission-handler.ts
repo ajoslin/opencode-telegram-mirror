@@ -22,6 +22,7 @@ type PendingPermissionContext = {
   permission: string
   patterns: string[]
   messageId: number
+  directory: string // Directory for looking up the correct OpenCode server
 }
 
 // Store pending permissions by a unique key (chatId:threadId)
@@ -40,6 +41,7 @@ export async function showPermissionButtons({
   threadId,
   sessionId,
   request,
+  directory,
   log,
 }: {
   telegram: TelegramClient
@@ -47,6 +49,7 @@ export async function showPermissionButtons({
   threadId: number | null
   sessionId: string
   request: PermissionRequest
+  directory: string
   log: LogFn
 }): Promise<void> {
   const threadKey = getThreadKey(chatId, threadId)
@@ -88,6 +91,7 @@ export async function showPermissionButtons({
       permission: request.permission,
       patterns: request.patterns,
       messageId: message.message_id,
+      directory,
     }
     pendingPermissions.set(threadKey, context)
 
@@ -101,7 +105,7 @@ export async function showPermissionButtons({
 
 /**
  * Handle callback query from permission button press
- * Returns the reply data to send to OpenCode
+ * Returns the reply data to send to OpenCode, including directory for server lookup
  */
 export async function handlePermissionCallback({
   telegram,
@@ -111,7 +115,7 @@ export async function handlePermissionCallback({
   telegram: TelegramClient
   callback: CallbackQuery
   log: LogFn
-}): Promise<{ requestId: string; reply: "once" | "always" | "reject" } | null> {
+}): Promise<{ requestId: string; reply: "once" | "always" | "reject"; directory: string } | null> {
   const data = callback.data
   if (!data?.startsWith("p:")) {
     return null
@@ -173,11 +177,13 @@ export async function handlePermissionCallback({
     threadKey,
     requestId: context.requestId,
     reply,
+    directory: context.directory,
   })
 
   return {
     requestId: context.requestId,
     reply,
+    directory: context.directory,
   }
 }
 
@@ -187,7 +193,7 @@ export async function handlePermissionCallback({
 export function cancelPendingPermission(
   chatId: number,
   threadId: number | null
-): { requestId: string; reply: "reject" } | null {
+): { requestId: string; reply: "reject"; directory: string } | null {
   const threadKey = getThreadKey(chatId, threadId)
   const context = pendingPermissions.get(threadKey)
 
@@ -200,6 +206,7 @@ export function cancelPendingPermission(
   return {
     requestId: context.requestId,
     reply: "reject",
+    directory: context.directory,
   }
 }
 

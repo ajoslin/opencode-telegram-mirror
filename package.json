@@ -1,17 +1,17 @@
 {
   "name": "opencode-telegram-mirror",
-  "version": "0.1.0",
-  "description": "OpenCode plugin to mirror messages bidirectionally with a Telegram channel or thread",
+  "version": "0.2.0",
+  "description": "Standalone bot that mirrors OpenCode sessions to Telegram topics",
   "type": "module",
-  "main": "src/index.ts",
-  "exports": {
-    ".": "./src/index.ts"
+  "main": "src/main.ts",
+  "bin": {
+    "telegram-mirror": "./src/main.ts"
   },
   "scripts": {
+    "start": "bun run src/main.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "latest",
     "@opencode-ai/sdk": "latest"
   },
   "devDependencies": {

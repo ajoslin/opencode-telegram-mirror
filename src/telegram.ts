@@ -11,6 +11,14 @@ export interface TelegramConfig {
   log?: LogFn // Optional logger function
 }
 
+export interface TelegramPhotoSize {
+  file_id: string
+  file_unique_id: string
+  width: number
+  height: number
+  file_size?: number
+}
+
 export interface TelegramMessage {
   message_id: number
   from?: {
@@ -26,6 +34,8 @@ export interface TelegramMessage {
   message_thread_id?: number
   date: number
   text?: string
+  caption?: string
+  photo?: TelegramPhotoSize[]
   reply_to_message?: TelegramMessage
 }
 
@@ -74,6 +84,8 @@ export class TelegramFatalError extends Error {
 export interface InlineKeyboardButton {
   text: string
   callback_data?: string
+  url?: string
+  web_app?: { url: string }
 }
 
 export interface InlineKeyboardMarkup {
@@ -169,7 +181,7 @@ export class TelegramClient {
             throw new TelegramFatalError(`Chat not found: ${this.chatId}`, 400)
           }
           
-          this.log("warn", "Markdown failed, retrying without parse_mode", { response: data })
+          this.log("warn", "Markdown failed, retrying without parse_mode", { response: data, text: chunk })
           // Retry without markdown if it fails (markdown can be finicky)
           params.parse_mode = undefined
           const retryResponse = await fetch(`${this.baseUrl}/sendMessage`, {
@@ -293,13 +305,6 @@ export class TelegramClient {
    * Get new updates (messages and callback queries) using long polling
    */
   async getUpdates(timeout = 30): Promise<TelegramUpdate[]> {
-    this.log("debug", "Polling for updates", {
-      offset: this.lastUpdateId + 1,
-      timeout,
-      chatId: this.chatId,
-      threadId: this.threadId,
-    })
-
     try {
       const params = new URLSearchParams({
         offset: String(this.lastUpdateId + 1),
@@ -324,10 +329,6 @@ export class TelegramClient {
         return []
       }
 
-      this.log("debug", "Received updates from Telegram", {
-        totalUpdates: data.result.length,
-      })
-
       const updates: TelegramUpdate[] = []
 
       for (const update of data.result) {
@@ -341,27 +342,12 @@ export class TelegramClient {
             ? msg.message_thread_id === this.threadId
             : true
 
-          this.log("debug", "Processing message update", {
-            updateId: update.update_id,
-            chatId: msg.chat.id,
-            threadId: msg.message_thread_id,
-            chatMatches,
-            threadMatches,
-            fromUser: msg.from?.username || msg.from?.first_name,
-            hasText: !!msg.text,
-          })
-
           if (chatMatches && threadMatches) {
             updates.push(update)
             this.log("info", "Message matched filter", {
               updateId: update.update_id,
               from: msg.from?.username || msg.from?.first_name,
               preview: msg.text?.slice(0, 50),
-            })
-          } else {
-            this.log("debug", "Message filtered out", {
-              updateId: update.update_id,
-              reason: !chatMatches ? "chat mismatch" : "thread mismatch",
             })
           }
         }
@@ -455,7 +441,7 @@ export class TelegramClient {
   /**
    * Send a single typing action
    */
-  private async sendTypingAction(): Promise<void> {
+  async sendTypingAction(): Promise<void> {
     const params: Record<string, unknown> = {
       chat_id: this.chatId,
       action: "typing",
@@ -489,157 +475,63 @@ export class TelegramClient {
   }
 
   /**
-   * Send a message to a specific thread (topic) in a supergroup forum
+   * Get a file's download URL from Telegram
+   * @param fileId The file_id from a photo/document/etc
+   * @returns The file URL, or null on failure
    */
-  async sendMessageToThread(
-    chatId: string,
-    threadId: number,
-    text: string
-  ): Promise<TelegramMessage | null> {
-    const maxLength = 4096
-    const chunks = this.splitMessage(text, maxLength)
-
-    this.log("debug", "Sending message to thread", {
-      chatId,
-      threadId,
-      textLength: text.length,
-      chunks: chunks.length,
-    })
-
-    let lastMessage: TelegramMessage | null = null
-
-    for (const chunk of chunks) {
-      const params: Record<string, unknown> = {
-        chat_id: chatId,
-        message_thread_id: threadId,
-        text: chunk,
-        parse_mode: "Markdown",
-      }
-
-      try {
-        const response = await fetch(`${this.baseUrl}/sendMessage`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(params),
-        })
-
-        const data = (await response.json()) as SendMessageResponse
-
-        if (!data.ok) {
-          // Retry without markdown
-          params.parse_mode = undefined
-          const retryResponse = await fetch(`${this.baseUrl}/sendMessage`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(params),
-          })
-          const retryData = (await retryResponse.json()) as SendMessageResponse
-          if (retryData.ok) {
-            lastMessage = retryData.result
-          } else {
-            this.log("error", "Failed to send message to thread", { response: retryData })
-          }
-        } else {
-          lastMessage = data.result
-        }
-      } catch (error) {
-        this.log("error", "Error sending message to thread", { error: String(error) })
-      }
-    }
-
-    return lastMessage
-  }
-
-  /**
-   * Create a forum topic in a supergroup
-   * @returns The thread_id of the created topic, or null on failure
-   */
-  async createForumTopic(
-    chatId: string,
-    name: string
-  ): Promise<{ threadId: number; name: string } | null> {
-    this.log("info", "Creating forum topic", { chatId, name })
-
-    // Telegram topic names are limited to 128 characters
-    const truncatedName = name.length > 128 ? `${name.slice(0, 125)}...` : name
-
-    const params = {
-      chat_id: chatId,
-      name: truncatedName,
-    }
+  async getFileUrl(fileId: string): Promise<string | null> {
+    this.log("debug", "Getting file info", { fileId })
 
     try {
-      const response = await fetch(`${this.baseUrl}/createForumTopic`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(params),
-      })
-
+      const response = await fetch(`${this.baseUrl}/getFile?file_id=${encodeURIComponent(fileId)}`)
       const data = (await response.json()) as {
         ok: boolean
-        result?: { message_thread_id: number; name: string }
+        result?: { file_id: string; file_unique_id: string; file_size?: number; file_path?: string }
         description?: string
       }
 
-      if (!data.ok) {
-        this.log("error", "Failed to create forum topic", { response: data })
+      if (!data.ok || !data.result?.file_path) {
+        this.log("error", "Failed to get file info", { response: data })
         return null
       }
 
-      this.log("info", "Forum topic created", {
-        threadId: data.result?.message_thread_id,
-        name: data.result?.name,
-      })
-
-      if (!data.result) return null
-      
-      return {
-        threadId: data.result.message_thread_id,
-        name: data.result.name,
-      }
+      // Construct the download URL
+      // Format: https://api.telegram.org/file/bot<token>/<file_path>
+      const downloadUrl = `${this.baseUrl.replace("/bot", "/file/bot")}/${data.result.file_path}`
+      this.log("debug", "Got file URL", { fileId, filePath: data.result.file_path })
+      return downloadUrl
     } catch (error) {
-      this.log("error", "Error creating forum topic", { error: String(error) })
+      this.log("error", "Error getting file URL", { fileId, error: String(error) })
       return null
     }
   }
 
   /**
-   * Edit a forum topic's name
+   * Download a file from Telegram and return it as a base64 data URL
+   * @param fileId The file_id from a photo/document/etc
+   * @param mimeType The MIME type for the data URL (e.g., "image/jpeg")
+   * @returns The base64 data URL, or null on failure
    */
-  async editForumTopic(
-    chatId: string,
-    threadId: number,
-    name: string
-  ): Promise<boolean> {
-    this.log("info", "Editing forum topic", { chatId, threadId, name })
-
-    const truncatedName = name.length > 128 ? `${name.slice(0, 125)}...` : name
-
-    const params = {
-      chat_id: chatId,
-      message_thread_id: threadId,
-      name: truncatedName,
-    }
+  async downloadFileAsDataUrl(fileId: string, mimeType: string): Promise<string | null> {
+    const fileUrl = await this.getFileUrl(fileId)
+    if (!fileUrl) return null
 
     try {
-      const response = await fetch(`${this.baseUrl}/editForumTopic`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(params),
-      })
-
-      const data = (await response.json()) as { ok: boolean; description?: string }
-
-      if (!data.ok) {
-        this.log("error", "Failed to edit forum topic", { response: data })
-        return false
+      this.log("debug", "Downloading file", { fileUrl })
+      const response = await fetch(fileUrl)
+      if (!response.ok) {
+        this.log("error", "Failed to download file", { status: response.status })
+        return null
       }
 
-      this.log("info", "Forum topic edited", { threadId, name: truncatedName })
-      return true
+      const buffer = await response.arrayBuffer()
+      const base64 = Buffer.from(buffer).toString("base64")
+      const dataUrl = `data:${mimeType};base64,${base64}`
+      this.log("debug", "File downloaded", { size: buffer.byteLength })
+      return dataUrl
     } catch (error) {
-      this.log("error", "Error editing forum topic", { error: String(error) })
-      return false
+      this.log("error", "Error downloading file", { error: String(error) })
+      return null
     }
   }
 

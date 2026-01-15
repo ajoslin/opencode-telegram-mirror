@@ -36,6 +36,8 @@ type PendingQuestionContext = {
   totalQuestions: number
   answeredCount: number
   messageIds: number[] // Track sent message IDs for cleanup
+  awaitingFreetext: number | null // questionIndex awaiting freetext input, or null
+  directory: string // Directory for looking up the correct OpenCode server
 }
 
 // Store pending questions by a unique key (chatId:threadId)
@@ -54,6 +56,7 @@ export async function showQuestionButtons({
   threadId,
   sessionId,
   request,
+  directory,
   log,
 }: {
   telegram: TelegramClient
@@ -61,6 +64,7 @@ export async function showQuestionButtons({
   threadId: number | null
   sessionId: string
   request: QuestionRequest
+  directory: string
   log: LogFn
 }): Promise<void> {
   const threadKey = getThreadKey(chatId, threadId)
@@ -81,6 +85,8 @@ export async function showQuestionButtons({
     totalQuestions: request.questions.length,
     answeredCount: 0,
     messageIds: [],
+    awaitingFreetext: null,
+    directory,
   }
 
   pendingQuestions.set(threadKey, context)
@@ -123,6 +129,7 @@ export async function showQuestionButtons({
 /**
  * Handle callback query from question button press
  * Returns the answer data if all questions are answered, null otherwise
+ * Returns { awaitingFreetext: true } if waiting for user to type custom answer
  */
 export async function handleQuestionCallback({
   telegram,
@@ -132,7 +139,7 @@ export async function handleQuestionCallback({
   telegram: TelegramClient
   callback: CallbackQuery
   log: LogFn
-}): Promise<{ requestId: string; answers: string[][] } | null> {
+}): Promise<{ requestId: string; answers: string[][]; directory: string } | { awaitingFreetext: true } | null> {
   const data = callback.data
   if (!data?.startsWith("q:")) {
     return null
@@ -140,6 +147,8 @@ export async function handleQuestionCallback({
 
   // Parse callback data: q:chatId:threadId:questionIndex:optionIndex
   const parts = data.split(":")
+  log("debug", "Parsing question callback", { parts, partsLength: parts.length })
+  
   if (parts.length < 5) {
     log("warn", "Invalid question callback data", { data })
     return null
@@ -149,8 +158,16 @@ export async function handleQuestionCallback({
   const questionIndex = Number.parseInt(parts[3] ?? "0", 10)
   const optionValue = parts[4] ?? "0"
 
+  log("debug", "Looking up pending question", { 
+    threadKey, 
+    questionIndex, 
+    optionValue,
+    pendingKeys: Array.from(pendingQuestions.keys())
+  })
+
   const context = pendingQuestions.get(threadKey)
   if (!context) {
+    log("warn", "No pending question for threadKey", { threadKey })
     await telegram.answerCallbackQuery(callback.id, {
       text: "This question has expired",
       showAlert: true,
@@ -168,15 +185,27 @@ export async function handleQuestionCallback({
   // Acknowledge the button press
   await telegram.answerCallbackQuery(callback.id)
 
-  // Record the answer
+  // Handle "Other" - wait for freetext input
   if (optionValue === "other") {
-    context.answers[questionIndex] = ["Other (please type your answer)"]
-  } else {
-    const optIdx = Number.parseInt(optionValue, 10)
-    const selectedLabel = question.options[optIdx]?.label ?? `Option ${optIdx + 1}`
-    context.answers[questionIndex] = [selectedLabel]
+    context.awaitingFreetext = questionIndex
+    
+    // Update the message to prompt for freetext input
+    const messageId = context.messageIds[questionIndex]
+    if (messageId) {
+      await telegram.editMessage(
+        messageId,
+        `*${question.header}*\n${question.question}\n\n_Please type your answer:_`
+      )
+    }
+    
+    log("info", "Awaiting freetext input for question", { threadKey, questionIndex })
+    return { awaitingFreetext: true }
   }
 
+  // Record the selected option answer
+  const optIdx = Number.parseInt(optionValue, 10)
+  const selectedLabel = question.options[optIdx]?.label ?? `Option ${optIdx + 1}`
+  context.answers[questionIndex] = [selectedLabel]
   context.answeredCount++
 
   // Update the message to show the selection and remove keyboard
@@ -199,11 +228,13 @@ export async function handleQuestionCallback({
     log("info", "All questions answered", {
       threadKey,
       requestId: context.requestId,
+      directory: context.directory,
     })
 
     return {
       requestId: context.requestId,
       answers,
+      directory: context.directory,
     }
   }
 
@@ -211,12 +242,87 @@ export async function handleQuestionCallback({
 }
 
 /**
- * Cancel pending question for a thread (e.g., when user sends a new message)
+ * Check if there's a pending freetext question for a thread
+ */
+export function isAwaitingFreetext(chatId: number, threadId: number | null): boolean {
+  const threadKey = getThreadKey(chatId, threadId)
+  const context = pendingQuestions.get(threadKey)
+  return context?.awaitingFreetext !== null && context?.awaitingFreetext !== undefined
+}
+
+/**
+ * Handle freetext answer for "Other" option
+ * Returns the answer data if all questions are answered, null otherwise
+ */
+export async function handleFreetextAnswer({
+  telegram,
+  chatId,
+  threadId,
+  text,
+  log,
+}: {
+  telegram: TelegramClient
+  chatId: number
+  threadId: number | null
+  text: string
+  log: LogFn
+}): Promise<{ requestId: string; answers: string[][]; directory: string } | null> {
+  const threadKey = getThreadKey(chatId, threadId)
+  const context = pendingQuestions.get(threadKey)
+
+  if (!context || context.awaitingFreetext === null) {
+    return null
+  }
+
+  const questionIndex = context.awaitingFreetext
+  const question = context.questions[questionIndex]
+
+  // Record the freetext answer
+  context.answers[questionIndex] = [text]
+  context.answeredCount++
+  context.awaitingFreetext = null
+
+  // Update the message to show the answer
+  const messageId = context.messageIds[questionIndex]
+  if (messageId && question) {
+    await telegram.editMessage(
+      messageId,
+      `*${question.header}*\n${question.question}\n\n_${text}_`
+    )
+  }
+
+  log("info", "Freetext answer recorded", { threadKey, questionIndex, text: text.slice(0, 50) })
+
+  // Check if all questions are answered
+  if (context.answeredCount >= context.totalQuestions) {
+    // Build answers array
+    const answers = context.questions.map((_, i) => context.answers[i] ?? [])
+
+    pendingQuestions.delete(threadKey)
+
+    log("info", "All questions answered (after freetext)", {
+      threadKey,
+      requestId: context.requestId,
+      directory: context.directory,
+    })
+
+    return {
+      requestId: context.requestId,
+      answers,
+      directory: context.directory,
+    }
+  }
+
+  return null
+}
+
+/**
+ * Cancel pending question for a thread (e.g., when user sends a new message that's not a freetext answer)
  */
 export function cancelPendingQuestion(
   chatId: number,
   threadId: number | null
-): { requestId: string; answers: string[][] } | null {
+): { requestId: string; answers: string[][]; directory: string } | null {
   const threadKey = getThreadKey(chatId, threadId)
   const context = pendingQuestions.get(threadKey)
 
@@ -234,6 +340,7 @@ export function cancelPendingQuestion(
   return {
     requestId: context.requestId,
     answers,
+    directory: context.directory,
   }
 }
 
