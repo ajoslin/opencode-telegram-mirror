@@ -560,6 +560,36 @@ export class TelegramClient {
   }
 
   /**
+   * Set bot commands (menu button)
+   */
+  async setMyCommands(
+    commands: Array<{ command: string; description: string }>
+  ): Promise<TelegramResult<boolean>> {
+    this.log("debug", "Setting bot commands", { count: commands.length })
+
+    try {
+      const response = await fetch(`${this.baseUrl}/setMyCommands`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ commands }),
+      })
+
+      const data = (await response.json()) as { ok: boolean; description?: string }
+
+      if (!data.ok) {
+        this.log("error", "Failed to set bot commands", { response: data })
+        return Result.err(new TelegramApiError({ cause: data.description || "Set commands failed" }))
+      }
+
+      this.log("info", "Bot commands set", { commands: commands.map((c) => c.command) })
+      return Result.ok(true)
+    } catch (error) {
+      this.log("error", "Error setting bot commands", { error: String(error) })
+      return Result.err(new TelegramApiError({ cause: error }))
+    }
+  }
+
+  /**
    * Get a file's download URL from Telegram
    * @param fileId The file_id from a photo/document/etc
    * @returns The file URL, or null on failure

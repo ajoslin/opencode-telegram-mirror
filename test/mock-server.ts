@@ -140,6 +140,10 @@ function handleTelegramApi(path: string, body: unknown): Response {
     case "sendChatAction":
       return Response.json({ ok: true, result: true })
     
+    case "setMyCommands":
+      console.log("[mock] Commands registered:", JSON.stringify((body as { commands?: unknown[] })?.commands))
+      return Response.json({ ok: true, result: true })
+    
     case "getFile":
       return Response.json({
         ok: true,

@@ -1,27 +1,27 @@
 {
-  "name": "opencode-telegram-mirror",
-  "version": "0.2.0",
-  "description": "Standalone bot that mirrors OpenCode sessions to Telegram topics",
-  "type": "module",
-  "main": "src/main.ts",
-  "bin": {
-    "telegram-mirror": "./src/main.ts"
-  },
-  "scripts": {
-    "start": "bun run src/main.ts",
-    "typecheck": "tsc --noEmit",
-    "test:mock-server": "bun run test/mock-server.ts",
-    "test:run": "bun run test/run-test.ts"
-  },
-  "dependencies": {
-    "@opencode-ai/sdk": "latest",
-    "better-result": "^2.0.0"
-  },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "typescript": "^5.9.3"
-  },
-  "peerDependencies": {
-    "bun": ">=1.0.0"
-  }
+	"name": "opencode-telegram-mirror",
+	"version": "0.2.0",
+	"description": "Standalone bot that mirrors OpenCode sessions to Telegram topics",
+	"type": "module",
+	"main": "src/main.ts",
+	"bin": {
+		"opencode-telegram-mirror": "./src/main.ts"
+	},
+	"scripts": {
+		"start": "bun run src/main.ts",
+		"typecheck": "tsc --noEmit",
+		"test:mock-server": "bun run test/mock-server.ts",
+		"test:run": "bun run test/run-test.ts"
+	},
+	"dependencies": {
+		"@opencode-ai/sdk": "latest",
+		"better-result": "^2.0.0"
+	},
+	"devDependencies": {
+		"@types/bun": "latest",
+		"typescript": "^5.9.3"
+	},
+	"peerDependencies": {
+		"bun": ">=1.0.0"
+	}
 }

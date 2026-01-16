@@ -5,7 +5,7 @@
 import { Database } from "bun:sqlite"
 import type { LogFn } from "./log"
 
-const DB_PATH = "/tmp/telegram-opencode.db"
+const DB_PATH = process.env.TELEGRAM_DB_PATH || "/tmp/telegram-opencode.db"
 
 let db: Database | null = null
 
@@ -72,6 +72,9 @@ export function setLastUpdateId(updateId: number, log: LogFn): void {
   )
 }
 
+/**
+ * Get the stored control message ID
+ */
 export function getControlMessageId(log: LogFn): number | null {
   const database = getDb(log)
   type Row = { value: string }
@@ -81,6 +84,9 @@ export function getControlMessageId(log: LogFn): number | null {
   return row ? Number.parseInt(row.value, 10) : null
 }
 
+/**
+ * Store the control message ID
+ */
 export function setControlMessageId(messageId: number, log: LogFn): void {
   const database = getDb(log)
   database.run(
@@ -89,6 +95,9 @@ export function setControlMessageId(messageId: number, log: LogFn): void {
   )
 }
 
+/**
+ * Get the stored session variant
+ */
 export function getSessionVariant(log: LogFn): string | null {
   const database = getDb(log)
   type Row = { value: string }
@@ -98,10 +107,14 @@ export function getSessionVariant(log: LogFn): string | null {
   return row?.value ?? null
 }
 
+/**
+ * Store the session variant
+ */
 export function setSessionVariant(variant: string, log: LogFn): void {
   const database = getDb(log)
   database.run(
     "INSERT OR REPLACE INTO state (key, value) VALUES (?, ?)",
     ["session_variant", variant]
   )
+  log("info", "Stored session variant", { variant })
 }

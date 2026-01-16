@@ -8,6 +8,7 @@
 
 import { spawn, type Subprocess } from "bun"
 import { setTimeout } from "node:timers/promises"
+import { unlink } from "node:fs/promises"
 
 const MOCK_PORT = 3456
 const fixtureFile = process.argv[2] || "test/fixtures/sample-updates.json"
@@ -53,6 +54,11 @@ async function startMockServer(): Promise<Subprocess> {
 async function startBot(): Promise<Subprocess> {
   console.log("[test] Starting bot...")
   
+  // Use a startup timestamp before fixture dates to ensure updates pass the filter
+  // Fixtures use dates around 1768590000 (Jan 2026)
+  const startupTimestamp = "1768589000"
+  const testDbPath = "/tmp/telegram-opencode-test.db"
+  
   const proc = spawn({
     cmd: ["bun", "run", "src/main.ts", "."],
     env: {
@@ -61,7 +67,9 @@ async function startBot(): Promise<Subprocess> {
       TELEGRAM_SEND_URL: `http://localhost:${MOCK_PORT}`,
       TELEGRAM_BOT_TOKEN: "test:token",
       TELEGRAM_CHAT_ID: "-1003546563617",
+      TELEGRAM_DB_PATH: testDbPath,
       OPENCODE_URL: process.env.OPENCODE_URL || "",
+      STARTUP_TIMESTAMP: startupTimestamp,
     },
     stdout: "inherit",
     stderr: "inherit",
@@ -113,6 +121,7 @@ async function main() {
   console.log("")
   
   try {
+    await unlink("/tmp/telegram-opencode-test.db").catch(() => {})
     mockServer = await startMockServer()
     
     await setTimeout(500)

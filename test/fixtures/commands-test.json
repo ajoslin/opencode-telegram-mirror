@@ -1,0 +1,157 @@
+[
+  {
+    "update_id": 100001,
+    "chat_id": "-1003546563617",
+    "payload": {
+      "update_id": 100001,
+      "message": {
+        "message_id": 1001,
+        "from": {
+          "id": 917351484,
+          "is_bot": false,
+          "first_name": "Test",
+          "username": "test_user"
+        },
+        "chat": {
+          "id": -1003546563617,
+          "title": "Test Chat",
+          "type": "supergroup"
+        },
+        "date": 1768590000,
+        "text": "/interrupt",
+        "entities": [
+          {
+            "offset": 0,
+            "length": 10,
+            "type": "bot_command"
+          }
+        ]
+      }
+    },
+    "received_at": 1768590000000
+  },
+  {
+    "update_id": 100002,
+    "chat_id": "-1003546563617",
+    "payload": {
+      "update_id": 100002,
+      "message": {
+        "message_id": 1002,
+        "from": {
+          "id": 917351484,
+          "is_bot": false,
+          "first_name": "Test",
+          "username": "test_user"
+        },
+        "chat": {
+          "id": -1003546563617,
+          "title": "Test Chat",
+          "type": "supergroup"
+        },
+        "date": 1768590001,
+        "text": "/plan",
+        "entities": [
+          {
+            "offset": 0,
+            "length": 5,
+            "type": "bot_command"
+          }
+        ]
+      }
+    },
+    "received_at": 1768590001000
+  },
+  {
+    "update_id": 100003,
+    "chat_id": "-1003546563617",
+    "payload": {
+      "update_id": 100003,
+      "message": {
+        "message_id": 1003,
+        "from": {
+          "id": 917351484,
+          "is_bot": false,
+          "first_name": "Test",
+          "username": "test_user"
+        },
+        "chat": {
+          "id": -1003546563617,
+          "title": "Test Chat",
+          "type": "supergroup"
+        },
+        "date": 1768590002,
+        "text": "/build",
+        "entities": [
+          {
+            "offset": 0,
+            "length": 6,
+            "type": "bot_command"
+          }
+        ]
+      }
+    },
+    "received_at": 1768590002000
+  },
+  {
+    "update_id": 100004,
+    "chat_id": "-1003546563617",
+    "payload": {
+      "update_id": 100004,
+      "message": {
+        "message_id": 1004,
+        "from": {
+          "id": 917351484,
+          "is_bot": false,
+          "first_name": "Test",
+          "username": "test_user"
+        },
+        "chat": {
+          "id": -1003546563617,
+          "title": "Test Chat",
+          "type": "supergroup"
+        },
+        "date": 1768590003,
+        "text": "/review",
+        "entities": [
+          {
+            "offset": 0,
+            "length": 7,
+            "type": "bot_command"
+          }
+        ]
+      }
+    },
+    "received_at": 1768590003000
+  },
+  {
+    "update_id": 100005,
+    "chat_id": "-1003546563617",
+    "payload": {
+      "update_id": 100005,
+      "message": {
+        "message_id": 1005,
+        "from": {
+          "id": 917351484,
+          "is_bot": false,
+          "first_name": "Test",
+          "username": "test_user"
+        },
+        "chat": {
+          "id": -1003546563617,
+          "title": "Test Chat",
+          "type": "supergroup"
+        },
+        "date": 1768590004,
+        "text": "/review HEAD~1",
+        "entities": [
+          {
+            "offset": 0,
+            "length": 7,
+            "type": "bot_command"
+          }
+        ]
+      }
+    },
+    "received_at": 1768590004000
+  }
+]

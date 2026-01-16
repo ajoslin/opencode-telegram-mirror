@@ -20,7 +20,7 @@ import {
 	getServer,
 	type OpenCodeServer,
 } from "./opencode"
-import { TelegramClient, type InlineKeyboardMarkup } from "./telegram"
+import { TelegramClient } from "./telegram"
 import { loadConfig } from "./config"
 import { createLogger } from "./log"
 import {
@@ -28,10 +28,6 @@ import {
 	setSessionId,
 	getLastUpdateId,
 	setLastUpdateId,
-	getControlMessageId,
-	setControlMessageId,
-	getSessionVariant,
-	setSessionVariant,
 } from "./database"
 import { formatPart, type Part } from "./message-formatting"
 import {
@@ -82,57 +78,6 @@ async function updateStatusMessage(
   log("debug", "Status message update", { messageId, state, success })
 }
 
-function getControlMessageText(variant: string): string {
-  return `*Session Controls*\nMode: _${variant}_`
-}
-
-function buildControlKeyboard(variant: string): InlineKeyboardMarkup {
-  const planLabel = variant === "plan" ? "Plan ✅" : "Plan"
-  const buildLabel = variant === "build" ? "Build ✅" : "Build"
-
-  return {
-    inline_keyboard: [
-      [{ text: "Interrupt", callback_data: "c:interrupt" }],
-      [
-        { text: planLabel, callback_data: "c:mode:plan" },
-        { text: buildLabel, callback_data: "c:mode:build" },
-      ],
-    ],
-  }
-}
-
-async function updateControlMessage(state: BotState): Promise<void> {
-  const text = getControlMessageText(state.sessionVariant)
-  const replyMarkup = buildControlKeyboard(state.sessionVariant)
-
-  if (state.controlMessageId) {
-    const editResult = await state.telegram.editMessage(state.controlMessageId, text, {
-      replyMarkup,
-    })
-    if (editResult.status === "ok" && editResult.value) {
-      return
-    }
-
-    log("warn", "Failed to edit control message", {
-      messageId: state.controlMessageId,
-      error: editResult.status === "error" ? editResult.error.message : "unknown",
-    })
-  }
-
-  const sendResult = await state.telegram.sendMessage(text, { replyMarkup })
-  if (sendResult.status === "error") {
-    log("error", "Failed to send control message", {
-      error: sendResult.error.message,
-    })
-    return
-  }
-
-  if (sendResult.value) {
-    state.controlMessageId = sendResult.value.message_id
-    setControlMessageId(state.controlMessageId, log)
-  }
-}
-
 interface BotState {
 	server: OpenCodeServer;
 	telegram: TelegramClient;
@@ -144,9 +89,6 @@ interface BotState {
 	updatesUrl: string | null;
 	botUserId: number | null;
 	sessionId: string | null;
-
-	controlMessageId: number | null;
-	sessionVariant: string;
 
 	assistantMessageIds: Set<string>;
 	pendingParts: Map<string, Part[]>;
@@ -264,6 +206,17 @@ async function main() {
 		botId: botInfo.id,
 	})
 
+	// Register bot commands (menu)
+	const commandsResult = await telegram.setMyCommands([
+		{ command: "interrupt", description: "Stop the current operation" },
+		{ command: "plan", description: "Switch to plan mode" },
+		{ command: "build", description: "Switch to build mode" },
+		{ command: "review", description: "Review changes [commit|branch|pr]" },
+	])
+	if (commandsResult.status === "error") {
+		log("warn", "Failed to set bot commands", { error: commandsResult.error.message })
+	}
+
 	// Determine session ID
 	log("info", "Checking for existing session...")
 	let sessionId: string | null = sessionIdArg || getSessionId(log)
@@ -296,8 +249,6 @@ async function main() {
 		updatesUrl: config.updatesUrl || null,
 		botUserId: botInfo.id,
 		sessionId,
-		controlMessageId: getControlMessageId(log),
-		sessionVariant: getSessionVariant(log) ?? "build",
 		assistantMessageIds: new Set(),
 		pendingParts: new Map(),
 		sentPartIds: new Set(),
@@ -346,8 +297,6 @@ async function main() {
 		pollSource: state.updatesUrl ? "Cloudflare DO" : "Telegram API",
 		updatesUrl: state.updatesUrl || "(using Telegram API)",
 	})
-
-	await updateControlMessage(state)
 
 	// Signal the worker that we're ready - it will update the status message with tunnel URL
 	const workerWsUrl = process.env.WORKER_WS_URL
@@ -570,7 +519,6 @@ async function pollFromDO(state: BotState): Promise<TelegramUpdate[]> {
 
 	const headers: Record<string, string> = {}
 
-	// Extract basic auth from URL if present
 	if (parsed.username || parsed.password) {
 		const credentials = btoa(`${parsed.username}:${parsed.password}`)
 		headers.Authorization = `Basic ${credentials}`
@@ -714,6 +662,63 @@ async function handleTelegramMessage(
 		return
 	}
 
+	if (messageText?.trim() === "/interrupt") {
+		log("info", "Received /interrupt command")
+		if (state.sessionId) {
+			const abortResult = await state.server.clientV2.session.abort({
+				sessionID: state.sessionId,
+				directory: state.directory,
+			})
+			if (abortResult.data) {
+				await state.telegram.sendMessage("Interrupted.")
+			} else {
+				log("error", "Failed to abort session", {
+					sessionId: state.sessionId,
+					error: abortResult.error,
+				})
+				await state.telegram.sendMessage("Failed to interrupt.")
+			}
+		} else {
+			await state.telegram.sendMessage("No active session.")
+		}
+		return
+	}
+
+	const commandMatch = messageText?.trim().match(/^\/(build|plan|review)(?:\s+(.*))?$/)
+	if (commandMatch) {
+		const [, command, args] = commandMatch
+		log("info", "Received command", { command, args })
+
+		if (!state.sessionId) {
+			const result = await state.server.client.session.create({
+				body: { title: "Telegram" },
+			})
+			if (result.data) {
+				state.sessionId = result.data.id
+				setSessionId(result.data.id, log)
+				log("info", "Created session for command", { sessionId: result.data.id })
+			} else {
+				log("error", "Failed to create session for command")
+				await state.telegram.sendMessage("Failed to create session.")
+				return
+			}
+		}
+
+		state.server.clientV2.session
+			.command({
+				sessionID: state.sessionId,
+				directory: state.directory,
+				command,
+				arguments: args || "",
+			})
+			.catch((err) => {
+				log("error", "Command failed", { command, error: String(err) })
+			})
+
+		log("info", "Command sent", { command, sessionId: state.sessionId })
+		return
+	}
+
 	log("info", "Received message", {
 		from: msg.from?.username,
 		preview: messageText?.slice(0, 50) ?? "[photo]",
@@ -810,7 +815,6 @@ async function handleTelegramMessage(
 		.prompt({
 			sessionID: state.sessionId,
 			directory: state.directory,
-			variant: state.sessionVariant,
 			parts,
 		})
 		.catch((err) => {
@@ -830,11 +834,6 @@ async function handleTelegramCallback(
 		state.threadId &&
 		callback.message?.message_thread_id !== state.threadId
 	) {
-		return
-	}
-
-	const controlHandled = await handleControlCallback(state, callback)
-	if (controlHandled) {
 		return
 	}
 
@@ -868,90 +867,7 @@ async function handleTelegramCallback(
 	}
 }
 
-async function handleControlCallback(
-	state: BotState,
-	callback: import("./telegram").CallbackQuery,
-): Promise<boolean> {
-	const data = callback.data
-	if (!data?.startsWith("c:")) {
-		return false
-	}
 
-	const action = data.slice(2)
-	if (!callback.message) {
-		const answerResult = await state.telegram.answerCallbackQuery(callback.id, {
-			text: "Control action expired",
-			showAlert: true,
-		})
-		if (answerResult.status === "error") {
-			log("error", "Failed to answer control callback", {
-				error: answerResult.error.message,
-			})
-		}
-		return true
-	}
-
-	if (!state.controlMessageId) {
-		state.controlMessageId = callback.message.message_id
-		setControlMessageId(state.controlMessageId, log)
-	}
-
-	const ackResult = await state.telegram.answerCallbackQuery(callback.id)
-	if (ackResult.status === "error") {
-		log("error", "Failed to acknowledge control callback", {
-			error: ackResult.error.message,
-		})
-	}
-
-	if (action === "interrupt") {
-		if (state.sessionId) {
-			const abortResult = await state.server.clientV2.session.abort({
-				sessionID: state.sessionId,
-				directory: state.directory,
-			})
-			if (abortResult.data) {
-				await state.telegram.sendMessage("Interrupted the active session.")
-			} else {
-				log("error", "Failed to abort session", {
-					sessionId: state.sessionId,
-					error: abortResult.error,
-				})
-				await state.telegram.sendMessage("Failed to interrupt the session.")
-			}
-		} else {
-			await state.telegram.sendMessage("No active session to interrupt.")
-		}
-		return true
-	}
-
-	if (action.startsWith("mode:")) {
-		const mode = action.split(":")[1]
-		if (mode === "plan" || mode === "build") {
-			state.sessionVariant = mode
-			setSessionVariant(mode, log)
-			await updateControlMessage(state)
-
-			const commandResult = await state.server.clientV2.tui.executeCommand({
-				command: "variant_cycle",
-				directory: state.directory,
-			})
-			if (commandResult.data) {
-				await state.telegram.sendMessage(`Switched to *${mode}* mode.`)
-			} else {
-				log("error", "Failed to execute variant switch", {
-					variant: mode,
-					error: commandResult.error,
-				})
-				await state.telegram.sendMessage(
-					`Saved *${mode}* mode. Start your next prompt to apply it.`
-				)
-			}
-			return true
-		}
-	}
-
-	return true
-}
 
 // =============================================================================
 // OpenCode Events
@@ -1027,12 +943,14 @@ async function handleOpenCodeEvent(state: BotState, ev: OpenCodeEvent) {
 		}
 	}
 
-	log("debug", "OpenCode event received", {
-		type: ev.type,
-		eventSessionId: sessionId,
-		stateSessionId: state.sessionId,
-		match: sessionId === state.sessionId,
-	})
+	if (ev.type !== "session.updated") {
+		log("debug", "OpenCode event received", {
+			type: ev.type,
+			eventSessionId: sessionId,
+			stateSessionId: state.sessionId,
+			match: sessionId === state.sessionId,
+		})
+	}
 
 	if (!sessionId || sessionId !== state.sessionId) return
 
