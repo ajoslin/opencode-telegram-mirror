@@ -496,6 +496,16 @@ interface TelegramUpdate {
 			mime_type?: string
 			file_size?: number
 		}
+		video?: {
+			file_id: string
+			file_unique_id: string
+			duration: number
+		}
+		video_note?: {
+			file_id: string
+			file_unique_id: string
+			duration: number
+		}
 		from?: { id: number; username?: string }
 		chat: { id: number }
 	}
@@ -694,7 +704,7 @@ async function handleTelegramMessage(
 	msg: NonNullable<TelegramUpdate["message"]>,
 ) {
 	const messageText = msg.text || msg.caption
-	if (!messageText && !msg.photo && !msg.voice) return
+	if (!messageText && !msg.photo && !msg.voice && !msg.video && !msg.video_note) return
 
 	// Ignore all bot messages - context is sent directly via OpenCode API
 	if (msg.from?.id === state.botUserId) {
@@ -901,6 +911,14 @@ async function handleTelegramMessage(
 		}
 	}
 
+	if (msg.video || msg.video_note) {
+		log("info", "Rejecting video message - not supported")
+		await state.telegram.sendMessage(
+			"Video files are not supported. Please send screenshots or audio files instead."
+		)
+		return
+	}
+
 	// Build prompt parts
 	const parts: Array<
 		| { type: "text"; text: string }
@@ -977,7 +995,8 @@ async function handleTelegramMessage(
 
 		const transcribedText = transcriptionResult.value
 		log("info", "Voice transcribed", { preview: transcribedText.slice(0, 50) })
-		parts.push({ type: "text", text: transcribedText })
+		const voiceContext = `[Voice message transcript - may contain transcription inaccuracies]\n\n${transcribedText}`
+		parts.push({ type: "text", text: voiceContext })
 	}
 
 	if (messageText) {
