@@ -96,36 +96,52 @@ export async function showQuestionButtons({
     const q = request.questions[i]
     if (!q) continue
 
+    const maxButtons = 100
+    const maxOptions = Math.max(maxButtons - 1, 0)
+    const trimmedOptions = q.options.slice(0, maxOptions)
+    const includeOther = trimmedOptions.length < maxButtons
+    const optionLines = trimmedOptions.map((opt, optIdx) => {
+      const description = opt.description ? ` - ${opt.description}` : ""
+      return `${optIdx + 1}. ${opt.label}${description}`
+    })
+
     // Build inline keyboard - max 8 buttons per row, max 100 buttons total
     const options = [
-      ...q.options.slice(0, 7).map((opt, optIdx) => ({
+      ...trimmedOptions.map((opt, optIdx) => ({
         label: opt.label.slice(0, 64), // Telegram button text limit
         callbackData: `q:${threadKey}:${i}:${optIdx}`,
       })),
-      {
-        label: "Other",
-        callbackData: `q:${threadKey}:${i}:other`,
-      },
     ]
 
-    const keyboard = TelegramClient.buildInlineKeyboard(options, { columns: 2 })
+    if (includeOther) {
+      options.push({
+        label: "Other",
+        callbackData: `q:${threadKey}:${i}:other`,
+      })
+    }
 
-  const messageResult = await telegram.sendMessage(
-    `*${q.header}*\n${q.question}`,
-    { replyMarkup: keyboard }
-  )
+    if (optionLines.length > 0 && includeOther) {
+      optionLines.push(`${optionLines.length + 1}. Other`)
+    }
 
-  if (messageResult.status === "error") {
-    log("error", "Failed to send question message", {
-      threadKey,
-      error: messageResult.error.message,
-    })
-    continue
-  }
+    const keyboard = TelegramClient.buildInlineKeyboard(options, { columns: 1 })
 
-  if (messageResult.value) {
-    context.messageIds.push(messageResult.value.message_id)
-  }
+    const messageResult = await telegram.sendMessage(
+      `*${q.header}*\n${q.question}${optionLines.length > 0 ? `\n\n${optionLines.join("\n")}` : ""}`,
+      { replyMarkup: keyboard }
+    )
+
+    if (messageResult.status === "error") {
+      log("error", "Failed to send question message", {
+        threadKey,
+        error: messageResult.error.message,
+      })
+      continue
+    }
+
+    if (messageResult.value) {
+      context.messageIds.push(messageResult.value.message_id)
+    }
 
   }
 
